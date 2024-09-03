@@ -1,0 +1,16 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<div class="container text-center">
+ 
+    <h2 class="my-4">Reconstruction Result</h2>
+    <div class="alert alert-success" role="alert">
+        Secret reconstruction successful!
+    <a href="{% url 'download_reconstructed' %}" class="btn btn-success" download>Download Reconstructed File (.enc)</a>
+</div>
+
+<div class="d-flex justify-content-center align-items-center mt-4">
+    <p class="mb-0 mr-3">You can now proceed to decrypt the file to get the original data</p>
+    <a href="{% url 'decrypt_file' %}" class="btn bbtn-primary btn-dark">Go to Decryption Page</a>
+</div>
+{% endblock %}

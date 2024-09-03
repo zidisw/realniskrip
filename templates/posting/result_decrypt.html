@@ -1,0 +1,12 @@
+<!-- posting/templates/posting/result_decrypt.html -->
+{% extends 'base.html' %}
+
+{% block content %}
+<div class="container text-center">
+    <h2>Decryption Result</h2>
+    <div class="alert alert-success" role="alert">
+        File decrypted successfully!
+        <a href="{{ decrypted_file.decryptedfile.url }}" class="btn btn-success">Download Decrypted File</a>
+    </div>
+</div>
+{% endblock %}

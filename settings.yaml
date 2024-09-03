@@ -1,0 +1,15 @@
+client_config_backend: file
+client_config_file: client_secrets.json
+
+oauth_scope:
+  - https://www.googleapis.com/auth/drive.file
+  - https://www.googleapis.com/auth/drive.metadata.readonly
+
+save_credentials: True
+save_credentials_backend: file
+save_credentials_file: credentials.json
+
+get_refresh_token: True
+
+oauth_callback_server: true
+oauth_callback_port: 8080

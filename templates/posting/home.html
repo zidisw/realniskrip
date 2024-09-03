@@ -1,0 +1,59 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block content %}
+<div class="container text-center">
+    <div class="row">
+        <div class="col-md-12">
+            <h1>Open the Encryption Now.<br> Secure your file.</h1>
+            <p>File security application to the cloud using hybrid cryptography, with AES and RSA algorithms, and
+                Shamir's secret sharing.</p>
+        </div>
+    </div>
+    <div class="row">
+        <div class="col-md-4">
+            <div class="card">
+                <img src="{% static 'myapp/images/aes.png' %}" class="card-img-top" alt="Advanced Encryption Standard">
+                <div class="card-body">
+                    <h5 class="card-title">Advanced Encryption Standard</h5>
+                    <p class="card-text">Main Corporate</p>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="card">
+                <img src="{% static 'myapp/images/rsa.png' %}" class="card-img-top" alt="River">
+                <div class="card-body">
+                    <h5 class="card-title">River</h5>
+                    <p class="card-text">Main Corporate</p>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="card">
+                <img src="{% static 'myapp/images/shamir.png' %}" class="card-img-top" alt="Shamir's Secret Sharing">
+                <div class="card-body">
+                    <h5 class="card-title">Shamir's Secret Sharing</h5>
+                    <p class="card-text">Main Corporate</p>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="row my-4">
+        <div class="col-md-12">
+            <a href="{% url 'encrypt_file' %}" class="btn btn-primary btn-lg">Encryption Now</a>
+        </div>
+    </div>
+    <div class="row align-items-center">
+        <div class="col-md-6">
+            <img src="{% static 'myapp/images/cloud.png' %}" alt="Cloud" class="img-fluid">
+        </div>
+        <div class="col-md-6 text-left">
+            <h2>Open Your Secure File.</h2>
+            <p>Open your encryption file from cloud using hybrid cryptography, with AES and RSA algorithms, and Shamir's
+                secret sharing.</p>
+            <a href="{% url 'reconstruct_secret_sharing' %}" class="btn btn-primary btn-lg">Decryption Now</a>
+        </div>
+    </div>
+</div>
+{% endblock %}

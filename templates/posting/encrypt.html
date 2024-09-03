@@ -1,0 +1,50 @@
+{% extends 'base.html' %}
+
+{% block title %}Encrypt File{% endblock %}
+
+{% block content %}
+<div class="container text-center">
+    <h2 class="my-2">Encrypt File</h2>
+    <h6 class="my-3">Enter File and KeyFile to start encryption</h6>
+    <form method="post" enctype="multipart/form-data" class="my-5">
+        {% csrf_token %}
+        <div class="form-group mb-4 d-flex justify-content-center">
+            <div class="input-container">
+                <label for="id_plainfile" class="mr-2">Plainfile:</label>
+                {{ form.plainfile }}
+            </div>
+        </div>
+        <div class="form-group mb-4 d-flex justify-content-center">
+            <div class="input-container">
+                <label for="id_keyfile" class="mr-2">Keyfile:</label>
+
+                {{ form.keyfile }}
+            </div>
+        </div>
+        <div class="text-center">
+            <button type="submit" class="btn btn-dark btn-lg mt-4">Encrypt</button>
+        </div>
+    </form>
+
+    {% if encrypted_file %}
+    <h3 class="mt-4">Encrypted File:</h3>
+    <a href="{{ encrypted_file.url }}" download>Download Encrypted File</a>
+    {% endif %}
+</div>
+
+<style>
+    input[type="file"] {
+        width: 210px;
+        /* Atur lebar input file sesuai keinginan */
+        margin-left: 5px;
+    }
+
+    .input-container {
+        border: 1px solid #10223A;
+        padding: 11px;
+        border-radius: 4px;
+        display: inline-block;
+    }
+</style>
+
+{% endblock %}

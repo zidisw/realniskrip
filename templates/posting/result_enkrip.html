@@ -1,0 +1,16 @@
+<!-- posting/templates/posting/result.html -->
+{% extends 'base.html' %}
+
+{% block content %}
+<div class="container ">
+    <h2 class="my-4">Encryption Result</h2>
+    <div class="alert alert-success" role="alert">
+        File encrypted successfully!
+        <a href="{{ encrypted_file.encryptedfile.url }}" class="btn btn-success">Download Encrypted File</a>
+    </div>
+    <div class="d-flex justify-content-center align-items-center mt-4">
+    <p class="mb-0 mr-3">You can now proceed to split the encrypted file using Secret Sharing</p>
+    <a href="{% url 'split_secret_sharing' encrypted_file.id %}" class="btn btn-primary btn-dark">Split Secret Sharing</a>
+    </div>
+</div>
+{% endblock %}
