@@ -136,3 +136,8 @@ LOGGING = {
         'level': 'DEBUG',
     },
 }
+
+DROPBOX_ACCESS_TOKEN = 'sl.B8O3OePjF1p5fDVCc6N13dIHurmUvG9mE5aWK8XRMKHr3YCjWQoGzWVrCGxdgbg-RoMJNCJ7w3afyVrrQba2JiUSHH4RmVwVCQH93xKmKk8LrJyj6sqxD1HOJOm6D35QiHNNp8XezH3y'
+
+APP_KEY = '10b2v2rft2hnssf'
+APP_SECRET = 'qhe65w88gokpfwa'

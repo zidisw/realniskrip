@@ -191,10 +191,15 @@ def split_secret_sharing(request, encrypted_file_id):
         logger.error(f"Error during Shamir's Secret Sharing: {e}")
         return HttpResponse("Shamir's Secret Sharing failed.", status=500)
 
+
+logger = logging.getLogger(__name__)
+
 def upload_shares_to_cloud(request, encrypted_file_id):
+    # Check if Google Drive credentials are in the session
     if 'google_drive_credentials' not in request.session:
         return redirect('google_drive_authenticate', encrypted_file_id=encrypted_file_id)
 
+    # Get the encrypted file and share paths
     encrypted_file = get_object_or_404(UploadedFile, id=encrypted_file_id)
     shares_file_paths = request.POST.getlist('shares_file_paths')
 
@@ -205,7 +210,10 @@ def upload_shares_to_cloud(request, encrypted_file_id):
         return HttpResponse("No shares provided for upload.", status=400)
 
     try:
-        full_shares_file_paths = [os.path.join(settings.MEDIA_ROOT, os.path.relpath(share_file_path, '/media/')) for share_file_path in shares_file_paths]
+        full_shares_file_paths = [
+            os.path.join(settings.MEDIA_ROOT, os.path.relpath(share_file_path, '/media/'))
+            for share_file_path in shares_file_paths
+        ]
         logger.info(f"Full shares file paths: {full_shares_file_paths}")
 
         # Upload the first share to Google Drive
@@ -216,25 +224,19 @@ def upload_shares_to_cloud(request, encrypted_file_id):
             media = MediaFileUpload(share_file.name)
             drive_service.files().create(body=file_metadata, media_body=media, fields='id').execute()
 
+        # Upload the second share to Dropbox
+        dbx = dropbox.Dropbox(settings.DROPBOX_ACCESS_TOKEN)
+        with open(full_shares_file_paths[1], 'rb') as share_file:
+            dbx.files_upload(share_file.read(), '/' + os.path.basename(full_shares_file_paths[1]), mute=True)
+
         # Attempt to render the success page
-        try:
-            return render(request, 'upload_success.html')
-        except Exception as template_error:
-            logger.error(f"Error rendering upload_success.html: {template_error}")
-            return HttpResponse("There was an error rendering the success page.", status=500)
-
-    except Exception as e:
-        logger.error(f"Error during uploading to Google Drive: {e}")
-        return HttpResponse(f"Uploading shares to Google Drive failed: {str(e)}", status=500)
-
-def test_upload_success(request):
-    try:
         return render(request, 'upload_success.html')
+
     except Exception as e:
-        logger.error(f"Error rendering upload_success.html: {e}")
-        return HttpResponse("There was an error rendering the success page.", status=500)
+        logger.error(f"Error during uploading to Google Drive and Dropbox: {e}")
+        return HttpResponse(f"Uploading shares to cloud failed: {str(e)}", status=500)
 
-
+# Google Drive Authentication
 def google_drive_authenticate(request, encrypted_file_id):
     SCOPES = ['https://www.googleapis.com/auth/drive.file']
     flow = InstalledAppFlow.from_client_secrets_file('credentials.json', SCOPES)
@@ -242,7 +244,39 @@ def google_drive_authenticate(request, encrypted_file_id):
     request.session['google_drive_credentials'] = credentials_to_dict(credentials)
     return redirect('upload_shares_to_cloud', encrypted_file_id=encrypted_file_id)
 
+def dropbox_authenticate(request):
+    auth_flow = dropbox.DropboxOAuth2FlowNoRedirect(
+        settings.APP_KEY,
+        settings.APP_SECRET,
+        token_access_type='offline',  # This ensures long-lived access tokens
+        scope=['files.content.write', 'files.content.read']  # Specify required scopes
+    )
+    authorize_url = auth_flow.start()
+    return redirect(authorize_url)
 
+
+# Handle Dropbox callback (if needed)
+def dropbox_callback(request):
+    auth_code = request.GET.get('code')
+    if not auth_code:
+        return HttpResponse("Authorization code is missing.", status=400)
+
+    auth_flow = dropbox.DropboxOAuth2FlowNoRedirect(settings.APP_KEY, settings.APP_SECRET)
+    try:
+        access_token, user_id = auth_flow.finish(auth_code)
+        request.session['dropbox_access_token'] = access_token
+        return redirect('upload_shares_to_cloud', encrypted_file_id=request.session.get('encrypted_file_id'))
+    except Exception as e:
+        logger.error(f"Error getting Dropbox access token: {e}")
+        return HttpResponse("Failed to authenticate with Dropbox.", status=500)
+
+def clear_dropbox_token(request):
+    if 'dropbox_access_token' in request.session:
+        del request.session['dropbox_access_token']
+    return redirect('dropbox_authenticate')
+
+
+# Convert Google credentials to a dictionary
 def credentials_to_dict(credentials):
     return {
         'token': credentials.token,
@@ -252,11 +286,6 @@ def credentials_to_dict(credentials):
         'client_secret': credentials.client_secret,
         'scopes': credentials.scopes
     }
-
-def dropbox_authenticate(request):
-    dbx = dropbox.DropboxOAuth2FlowNoRedirect(app_key, app_secret)
-    authorize_url = dbx.start()
-    return redirect('split_secret_sharing')  # Arahkan ke URL untuk login Dropbox
 
 def onedrive_authenticate(request):
     authority_url = 'https://login.microsoftonline.com/common'

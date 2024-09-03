@@ -3,41 +3,45 @@
 {% block content %}
 <div class="container">
     <div class="text-center">
-    <h2>Shamir's Secret Sharing Result</h2>
-    <div class="alert alert-success" role="alert">
-        File successfully split using Shamir's Secret Sharing!
-    </div>
-</div>
-
-<p class="mt-4">The file has been split into multiple shares for enhanced security. You can download each share individually below.</p>
-<div class="d-flex justify-content-start align-items-center mt-4">
-    <h3 class="mr-3">Shares:</h3>
-    <div class="d-flex">
-        {% for share_file_path in shares_file_paths %}
-        <a href="{{ share_file_path }}" class="btn btn-secondary mx-2">Download Share {{ forloop.counter }}</a>
-        {% endfor %}
+        <h2>Shamir's Secret Sharing Result</h2>
+        <div class="alert alert-success" role="alert">
+            File successfully split using Shamir's Secret Sharing!
+        </div>
     </div>
 
-    <form method="post" action="{% url 'upload_shares_to_cloud' encrypted_file.id %}">
-        {% csrf_token %}
-        {% for share_file_path in shares_file_paths %}
-        <input type="hidden" name="shares_file_paths" value="{{ share_file_path }}">
-        {% endfor %}
-        <button type="submit" class="btn btn-success mx-2">Upload Shares to Cloud</button>
-    </form>
-</div>
+    <p class="mt-4">The file has been split into multiple shares for enhanced security. You can download each share individually below.</p>
+    
+    <div class="mt-4">
+        <h3>Shares:</h3>
+        <div class="d-flex flex-wrap">
+            {% for share_file_path in shares_file_paths %}
+                <a href="{{ share_file_path }}" class="btn btn-secondary m-2">Download Share {{ forloop.counter }}</a>
+            {% endfor %}
+        </div>
+    </div>
 
-    <h3 class="mt-4">Large Part File:</h3>
-    <div class="d-flex justify-content-start align-items-center">
-    <p class="mt-4">The large part of the file is also available for download. This part is necessary to reconstruct the original file</p>
-    <a href="{{ large_part_url }}" class="btn btn-primary mx-2">Download Large Part</a>
-</div>
+    <div class="mt-4">
+        <h3>Upload Shares to Cloud:</h3>
+        <form method="post" action="{% url 'upload_shares_to_cloud' encrypted_file.id %}">
+            {% csrf_token %}
+            {% for share_file_path in shares_file_paths %}
+                <input type="hidden" name="shares_file_paths" value="{{ share_file_path }}">
+            {% endfor %}
+            <button type="submit" class="btn btn-success m-2">Upload to Cloud</button>
+        </form>
+    </div>
 
-    <div>
+    <div class="mt-4">
+        <h3>Large Part File:</h3>
+        <p>This part is necessary to reconstruct the original file.</p>
+        <a href="{{ large_part_url }}" class="btn btn-primary">Download Large Part</a>
+    </div>
+
+    <div class="mt-4">
         <h4>Debug Information:</h4>
         <ul>
             {% for share_file_path in shares_file_paths %}
-            <li>{{ share_file_path }}</li>
+                <li>{{ share_file_path }}</li>
             {% endfor %}
         </ul>
     </div>
