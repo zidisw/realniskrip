@@ -194,29 +194,35 @@ def split_secret_sharing(request, encrypted_file_id):
 
 logger = logging.getLogger(__name__)
 
+
 def upload_shares_to_cloud(request, encrypted_file_id):
-    # Check if Google Drive credentials are in the session
+    # Ensure Google Drive credentials are in the session
     if 'google_drive_credentials' not in request.session:
         return redirect('google_drive_authenticate', encrypted_file_id=encrypted_file_id)
 
-    # Get the encrypted file and share paths
+    # Ensure Dropbox access token is set
+    if not settings.DROPBOX_ACCESS_TOKEN:
+        return HttpResponse("Dropbox access token is missing.", status=400)
+
+    # Ensure OneDrive access token is in the session
+    if 'onedrive_access_token' not in request.session:
+        return redirect('onedrive_authenticate', encrypted_file_id=encrypted_file_id)
+
+    # Now retrieve the file and its shares for upload
     encrypted_file = get_object_or_404(UploadedFile, id=encrypted_file_id)
     shares_file_paths = request.POST.getlist('shares_file_paths')
-
-    logger.info(f"Shares file paths: {shares_file_paths}")
-
+    
     if len(shares_file_paths) < 1:
-        logger.error(f"Expected at least 1 share, but got {len(shares_file_paths)}")
         return HttpResponse("No shares provided for upload.", status=400)
 
     try:
+        # Upload shares to each cloud service
         full_shares_file_paths = [
             os.path.join(settings.MEDIA_ROOT, os.path.relpath(share_file_path, '/media/'))
             for share_file_path in shares_file_paths
         ]
-        logger.info(f"Full shares file paths: {full_shares_file_paths}")
-
-        # Upload the first share to Google Drive
+        
+        # Google Drive Upload
         credentials = Credentials(**request.session['google_drive_credentials'])
         drive_service = build('drive', 'v3', credentials=credentials)
         with open(full_shares_file_paths[0], 'rb') as share_file:
@@ -224,18 +230,33 @@ def upload_shares_to_cloud(request, encrypted_file_id):
             media = MediaFileUpload(share_file.name)
             drive_service.files().create(body=file_metadata, media_body=media, fields='id').execute()
 
-        # Upload the second share to Dropbox
+        # Dropbox Upload
         dbx = dropbox.Dropbox(settings.DROPBOX_ACCESS_TOKEN)
         with open(full_shares_file_paths[1], 'rb') as share_file:
             dbx.files_upload(share_file.read(), '/' + os.path.basename(full_shares_file_paths[1]), mute=True)
 
-        # Attempt to render the success page
+        # OneDrive Upload
+        access_token = request.session.get('onedrive_access_token')
+        for i in range(2, len(full_shares_file_paths)):
+            one_drive_upload_url = f"https://graph.microsoft.com/v1.0/me/drive/root:/{os.path.basename(full_shares_file_paths[i])}:/content"
+            with open(full_shares_file_paths[i], 'rb') as share_file:
+                file_content = share_file.read()
+            
+            headers = {
+                'Authorization': f'Bearer {access_token}',
+                'Content-Type': 'application/octet-stream'
+            }
+            response = requests.put(one_drive_upload_url, headers=headers, data=file_content)
+
+            if response.status_code != 201:
+                return HttpResponse(f"Failed to upload to OneDrive: {response.text}", status=500)
+
         return render(request, 'upload_success.html')
 
     except Exception as e:
-        logger.error(f"Error during uploading to Google Drive and Dropbox: {e}")
         return HttpResponse(f"Uploading shares to cloud failed: {str(e)}", status=500)
 
+    
 # Google Drive Authentication
 def google_drive_authenticate(request, encrypted_file_id):
     SCOPES = ['https://www.googleapis.com/auth/drive.file']
@@ -275,6 +296,60 @@ def clear_dropbox_token(request):
         del request.session['dropbox_access_token']
     return redirect('dropbox_authenticate')
 
+def onedrive_authenticate(request, encrypted_file_id):
+    app = ConfidentialClientApplication(
+        client_id=settings.ONEDRIVE_CLIENT_ID,
+        authority=settings.ONEDRIVE_AUTHORITY,
+        client_credential=settings.ONEDRIVE_CLIENT_SECRET
+    )
+    auth_url = app.get_authorization_request_url(
+        scopes=settings.ONEDRIVE_SCOPES,
+        redirect_uri=settings.ONEDRIVE_REDIRECT_URI
+    )
+    # Store encrypted_file_id in session
+    request.session['encrypted_file_id'] = encrypted_file_id
+    
+    # Log session for debugging
+    logger.info(f"Session data before redirecting to OneDrive: {request.session.items()}")
+    
+    return redirect(auth_url)
+
+def onedrive_callback(request):
+    code = request.GET.get('code')
+    if not code:
+        logger.error("No authorization code received.")
+        return HttpResponse("No authorization code received.", status=400)
+
+    app = ConfidentialClientApplication(
+        client_id=settings.ONEDRIVE_CLIENT_ID,
+        authority=settings.ONEDRIVE_AUTHORITY,
+        client_credential=settings.ONEDRIVE_CLIENT_SECRET
+    )
+
+    try:
+        result = app.acquire_token_by_authorization_code(
+            code,
+            scopes=settings.ONEDRIVE_SCOPES,
+            redirect_uri=settings.ONEDRIVE_REDIRECT_URI
+        )
+
+        logger.info(f"Token exchange result: {result}")
+
+        if 'access_token' in result:
+            request.session['onedrive_access_token'] = result['access_token']
+            encrypted_file_id = request.session.get('encrypted_file_id')
+            if not encrypted_file_id:
+                logger.error("No encrypted file ID found in session.")
+                return HttpResponse("No encrypted file ID found in session.", status=400)
+
+            return redirect('upload_shares_to_cloud', encrypted_file_id=encrypted_file_id)
+        else:
+            error_msg = result.get('error_description', 'Unknown error')
+            logger.error(f"Failed to authenticate with OneDrive: {error_msg}")
+            return HttpResponse(f"Failed to authenticate with OneDrive: {error_msg}", status=400)
+    except Exception as e:
+        logger.error(f"Error during token exchange: {str(e)}")
+        return HttpResponse(f"Error during token exchange: {str(e)}", status=500)
 
 # Convert Google credentials to a dictionary
 def credentials_to_dict(credentials):
@@ -287,17 +362,11 @@ def credentials_to_dict(credentials):
         'scopes': credentials.scopes
     }
 
-def onedrive_authenticate(request):
-    authority_url = 'https://login.microsoftonline.com/common'
-    client_id = 'your_onedrive_client_id'
-    client_secret = 'your_onedrive_client_secret'
-    redirect_uri = 'http://localhost:8000/onedrive-callback/'
 
-    app = ConfidentialClientApplication(
-        client_id, authority=authority_url, client_credential=client_secret)
-    flow = app.initiate_device_flow(scopes=["Files.ReadWrite.All"])
-    request.session['onedrive_flow'] = flow
-    return redirect(flow['split_secret_sharing'])  # Arahkan ke URL untuk login OneDrive
+def clear_session(request):
+    request.session.flush()  # Clears all session data
+    return HttpResponse("Session cleared.")
+
 
 def reconstruct_secret_sharing(request):
     if request.method == 'POST':
