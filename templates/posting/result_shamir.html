@@ -9,39 +9,47 @@
         </div>
     </div>
 
-    <p class="mt-4">The file has been split into multiple shares for enhanced security. You can download each share individually below.</p>
-    
+    <p class="mt-4">The file has been split into multiple shares for enhanced
+        security. You can download each share individually below.</p>
+
     <div class="mt-4">
         <h3>Shares:</h3>
         <div class="d-flex flex-wrap">
             {% for share_file_path in shares_file_paths %}
-                <a href="{{ share_file_path }}" class="btn btn-secondary m-2">Download Share {{ forloop.counter }}</a>
+            <a href="{{ share_file_path }}"
+                class="btn btn-secondary m-2">Download Share {{ forloop.counter
+                }}</a>
             {% endfor %}
         </div>
     </div>
 
     <div class="mt-4">
         <h3>Upload Shares to Cloud:</h3>
-        <form method="post" action="{% url 'upload_shares_to_cloud' encrypted_file.id %}">
+        <form method="POST"
+            action="{% url 'upload_shares_to_cloud' encrypted_file_id %}">
             {% csrf_token %}
             {% for share_file_path in shares_file_paths %}
-                <input type="hidden" name="shares_file_paths" value="{{ share_file_path }}">
+            <input type="hidden" name="shares_file_paths"
+                value="{{ share_file_path }}">
             {% endfor %}
-            <button type="submit" class="btn btn-success m-2">Upload to Cloud</button>
+            <button type="submit" class="btn btn-success m-2">Upload to
+                Cloud</button>
         </form>
+
     </div>
 
     <div class="mt-4">
         <h3>Large Part File:</h3>
         <p>This part is necessary to reconstruct the original file.</p>
-        <a href="{{ large_part_url }}" class="btn btn-primary">Download Large Part</a>
+        <a href="{{ large_part_url }}" class="btn btn-primary">Download Large
+            Part</a>
     </div>
 
     <div class="mt-4">
         <h4>Debug Information:</h4>
         <ul>
             {% for share_file_path in shares_file_paths %}
-                <li>{{ share_file_path }}</li>
+            <li>{{ share_file_path }}</li>
             {% endfor %}
         </ul>
     </div>

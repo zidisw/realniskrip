@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Upload Confirmation</title>
+</head>
+<body>
+    <h1>Confirm Upload of Shares</h1>
+
+    <p>Are you sure you want to upload the following shares to the cloud?</p>
+    <ul>
+        {% for share in shares_file_paths %}
+            <li>{{ share }}</li>
+        {% endfor %}
+    </ul>
+
+    <form method="POST" action="{% url 'upload_shares_to_cloud' encrypted_file_id %}">
+        {% csrf_token %}
+        <!-- Hidden fields to pass the share paths to the POST request -->
+        {% for share in shares_file_paths %}
+            <input type="hidden" name="shares_file_paths" value="{{ share }}">
+        {% endfor %}
+        <button type="submit">Confirm and Upload</button>
+    </form>
+</body>
+</html>
