@@ -7,12 +7,15 @@
         <div class="alert alert-success" role="alert">
             File successfully split using Shamir's Secret Sharing!
         </div>
+        <div class="alert alert-info" role="alert">
+            Shamir's Secret Sharing took {{ split_duration }} seconds.
+        </div>
     </div>
 
     <p class="mt-4">The file has been split into multiple shares for enhanced
         security. You can download each share individually below.</p>
 
-    <div class="mt-4">
+    <!-- <div class="mt-4">
         <h3>Shares:</h3>
         <div class="d-flex flex-wrap">
             {% for share_file_path in shares_file_paths %}
@@ -21,7 +24,7 @@
                 }}</a>
             {% endfor %}
         </div>
-    </div>
+    </div> -->
 
     <div class="mt-4">
         <h3>Upload Shares to Cloud:</h3>

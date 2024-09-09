@@ -8,24 +8,213 @@
         <div class="form-group d-flex justify-content-center align-items-center mb-4">
             <label for="shares_files" class="mr-3">Upload Share Files (at least 2):</label>
             <div class="input-container">
-            <input type="file" class="form-control" id="shares_files" name="shares_files" multiple required>
+                <!-- Google Drive Button -->
+                <button type="button" id="googleDriveBtn" class="btn btn-primary mb-2">Select from Google Drive</button>
+
+                <!-- Dropbox Button -->
+                <button type="button" id="dropboxBtn" class="btn btn-primary mb-2">Select from Dropbox</button>
+
+                <!-- OneDrive Button -->
+                <button type="button" id="oneDriveBtn" class="btn btn-primary mb-2">Select from OneDrive</button>
             </div>
         </div>
+
+         <!-- Tambahkan input hidden untuk encrypted_file_id -->
+    <input type="hidden" id="encrypted_file_id" value="{{ encrypted_file_id }}">
+
         <div class="form-group d-flex justify-content-center align-items-center mb-4">
             <label for="large_part_file" class="mr-3">Upload Large Part File:</label>
             <div class="input-container">
-            <input type="file" class="form-control" id="large_part_file" name="large_part_file" required>
+                <input type="file" class="form-control" id="large_part_file" name="large_part_file" required>
             </div>
         </div>
-        <button type="submit" class="btn btn-primary btn-dark ">Reconstruct Secret</button>
+        <div id="status" class="mb-4">0 of 3 files uploaded</div>
+        <button type="button" id="reconstructBtn" class="btn btn-primary btn-dark">Reconstruct Secret</button>
     </form>
+
+    <!-- Tempat untuk menampilkan file yang dipilih dari cloud -->
+    <div id="cloud-files" class="mt-4">
+        <h4>Selected Files from Cloud</h4>
+        <ul id="file-list"></ul>
+    </div>
 </div>
+
+<script>
+    let uploadedFilesCount = 0;
+    const totalFilesRequired = 3;
+
+    function updateUploadStatus() {
+        document.getElementById('status').textContent = `${uploadedFilesCount} of ${totalFilesRequired} files uploaded`;
+        if (uploadedFilesCount >= totalFilesRequired) {
+            document.getElementById('reconstructBtn').disabled = false;
+        }
+    }
+
+    // Fungsi untuk upload file besar (local) dan cek ketika file diupload
+    document.getElementById('large_part_file').addEventListener('change', function() {
+        uploadedFilesCount += 1;  // Tambah file yang sudah diupload
+        updateUploadStatus();  // Update status upload
+    });
+
+//google drive
+    document.getElementById('googleDriveBtn').addEventListener('click', function() {
+        fetch('/posting/fetch_from_google_drive_ajax/')
+        .then(response => response.json())
+        .then(data => {
+            let fileList = document.getElementById('file-list');
+            fileList.innerHTML = ''; // Bersihkan daftar file sebelumnya
+            data.files.forEach(file => {
+                let li = document.createElement('li');
+                li.textContent = file.name;
+    
+                // Tombol upload untuk mengunggah file langsung ke sistem
+                let uploadBtn = document.createElement('button');
+                uploadBtn.textContent = 'Upload to System';
+                
+                // Di frontend, saat tombol 'Upload to System' ditekan
+uploadBtn.onclick = function() {
+    let encodedFileName = encodeURIComponent(file.id);  // Gunakan file ID dari Google Drive
+    fetch(`/posting/upload_from_google_drive_to_system/${encodedFileName}/`)
+    .then(response => {
+        if (!response.ok) {  // Cek status respons
+            throw new Error('Network response was not ok');
+        }
+        return response.json();
+    })
+    .then(data => {
+        if (data.message) {
+            alert(data.message);  // Tampilkan pesan sukses
+            uploadedFilesCount += 1;  // Tambah file yang sudah diupload
+            updateUploadStatus();
+        } else {
+            console.error('Error uploading file:', data.error);
+        }
+    })
+    .catch(error => console.error('Error uploading file:', error));
+};
+
+    
+                li.appendChild(uploadBtn);
+                fileList.appendChild(li);
+            });
+        })
+        .catch(error => console.error('Error fetching files from Google Drive:', error));
+    });
+    
+    
+
+// Fungsi untuk mengambil file dari Dropbox dan mengunggahnya langsung ke sistem
+document.getElementById('dropboxBtn').addEventListener('click', function() {
+    fetch('/posting/fetch_from_dropbox_ajax/')
+    .then(response => response.json())
+    .then(data => {
+        let fileList = document.getElementById('file-list');
+        fileList.innerHTML = ''; // Bersihkan daftar file sebelumnya
+        if (data.files && data.files.length > 0) {
+            data.files.forEach(file => {
+                let li = document.createElement('li');
+                li.textContent = file.name;
+
+                // Tombol upload untuk mengunggah file langsung ke sistem
+                let uploadBtn = document.createElement('button');
+                uploadBtn.textContent = 'Upload to System';
+                
+                // Event handler untuk tombol upload
+                uploadBtn.onclick = function() {
+                    let encodedFileName = encodeURIComponent(file.name);  // Encode nama file untuk URL
+                    fetch(`/posting/upload_from_dropbox_to_system/${encodedFileName}/`)
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.message) {
+                            alert(data.message);  // Tampilkan pesan sukses
+                            uploadedFilesCount += 1;  // Tambah file yang sudah diupload
+                            document.getElementById('status').textContent = `${uploadedFilesCount} of ${totalFilesRequired} files uploaded`;
+
+                            // Aktifkan tombol rekonstruksi jika semua file sudah diupload
+                            if (uploadedFilesCount >= totalFilesRequired) {
+                                document.getElementById('reconstructBtn').disabled = false;
+                            }
+                        } else {
+                            console.error('Error uploading file:', data.error);
+                        }
+                    })
+                    .catch(error => console.error('Error uploading file:', error));
+                };
+
+                li.appendChild(uploadBtn);
+                fileList.appendChild(li);
+            });
+        } else {
+            let li = document.createElement('li');
+            li.textContent = 'No files found in Dropbox.';
+            fileList.appendChild(li);
+        }
+    })
+    .catch(error => console.error('Error fetching files from Dropbox:', error));
+});
+
+
+document.getElementById('oneDriveBtn').addEventListener('click', function() {
+    const encryptedFileId = document.getElementById('encrypted_file_id').value;  // Ambil ID file terenkripsi
+    
+    fetch('/posting/onedrive-authenticate/', {
+        method: 'POST',
+        headers: {
+            'X-CSRFToken': '{{ csrf_token }}',  // Pastikan CSRF token benar
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ encrypted_file_id: encryptedFileId })  // Kirim data dengan benar
+    })
+    .then(response => {
+        if (!response.ok) {
+            throw new Error('Network response was not ok');
+        }
+        return response.json();
+    })
+    .then(data => {
+        if (data.redirect_url) {
+            window.location.href = data.redirect_url;
+        }
+    })
+    .catch(error => console.error('Error:', error));
+});
+
+
+
+    // Google Drive
+data.files.forEach(file => {
+    let li = document.createElement('li');
+    li.textContent = file.name;
+    
+    // Tombol untuk mengunduh file
+    let downloadBtn = document.createElement('button');
+    downloadBtn.textContent = 'Download';
+    downloadBtn.onclick = function() {
+        fetch(`/download_from_google_drive/${file.id}/`)
+        .then(response => response.blob())
+        .then(blob => {
+            const url = window.URL.createObjectURL(new Blob([blob]));
+            const link = document.createElement('a');
+            link.href = url;
+            link.setAttribute('download', file.name);
+            document.body.appendChild(link);
+            link.click();
+            link.parentNode.removeChild(link);
+        })
+        .catch(error => console.error('Error downloading file from Google Drive:', error));
+    };
+    
+    li.appendChild(downloadBtn);
+    fileList.appendChild(li);
+});
+
+</script>
 
 <style>
     input[type="file"] {
         width: calc(100% - 10px);
-        border: none; /* Menghapus border abu-abu di sekitar Choose File */
-        box-shadow: none; /* Menghapus shadow di sekitar Choose File */
+        border: none;
+        box-shadow: none;
     }
 
     .input-container {
@@ -37,9 +226,16 @@
     }
 
     label {
-        min-width: 250px; /* Atur lebar minimum label agar sejajar dengan input */
-        text-align: right; /* Sejajarkan teks label ke kanan */
+        min-width: 250px;
+        text-align: right;
+    }
+
+    .btn-primary {
+        background-color: #10223A;
+        border: none;
+        color: white;
+        padding: 10px 20px;
+        font-size: 16px;
     }
 </style>
 {% endblock %}
-

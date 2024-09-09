@@ -2,7 +2,7 @@ import os
 import base64
 from django.conf import settings
 from django.shortcuts import render, redirect, get_object_or_404
-from django.http import HttpResponse, FileResponse
+from django.http import HttpResponse, FileResponse, JsonResponse
 from .forms import UploadFileForm
 from .models import UploadedFile
 from .utils import aes_decrypt, decrypt_file_util, encrypt_file_util,  rsa_encrypt, generate_rsa_keys, read_file, write_file, save_rsa_keys_to_file, adjust_key_length, prepare_aes_key, rsa_decrypt, prepare_rsa_key, process_shamir_secret_sharing, write_binary_file, read_binary_file, recover_secret, join_data
@@ -16,9 +16,13 @@ import dropbox
 import requests
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
-from googleapiclient.http import MediaFileUpload
+from googleapiclient.http import MediaFileUpload, MediaIoBaseDownload
 from google_auth_oauthlib.flow import InstalledAppFlow
 from django.shortcuts import redirect
+from django.http import HttpResponseRedirect
+import time
+from google.auth.transport.requests import Request
+import io
 
 logger = logging.getLogger(__name__)
 
@@ -97,6 +101,10 @@ def decrypt_file(request):
                 return HttpResponse("Invalid private key.", status=400)
 
             try:
+                 # Catat waktu mulai dekripsi
+                start_time = time.perf_counter()
+                logger.info(f"Start time: {start_time}")  # Tambahkan log untuk waktu mulai
+                
                 # Simpan file terenkripsi
                 uploaded_instance = UploadedFile(encryptedfile=encrypted_file)
                 uploaded_instance.save()
@@ -120,6 +128,12 @@ def decrypt_file(request):
                 # Dekripsi file menggunakan AES
                 decrypted_file_path = decrypt_file_util(file_path, aes_key)
                 
+                # Catat waktu selesai dekripsi
+                end_time = time.perf_counter()
+                logger.info(f"End time: {end_time}")  # Tambahkan log untuk waktu selesai
+                decryption_duration = end_time - start_time  # Durasi proses dekripsi dalam detik
+                logger.info(f"Decryption duration: {decryption_duration} seconds")  # Log durasi dekripsi
+                
                 # Ubah nama file hasil dekripsi menjadi .docx
                 decrypted_file_name = os.path.basename(file_path).rsplit('.', 1)[0] + '.docx'
                 decrypted_file_save_path = os.path.join(os.path.dirname(decrypted_file_path), decrypted_file_name)
@@ -129,6 +143,9 @@ def decrypt_file(request):
                     uploaded_instance.decryptedfile.save(decrypted_file_name, File(f))
 
                 uploaded_instance.save()
+                # Simpan durasi dekripsi ke sesi
+                request.session['decryption_duration'] = decryption_duration
+
                 return redirect('decryption_result', decrypted_file_id=uploaded_instance.id)
             except Exception as e:
                 logger.error(f"Error during decryption: {e}")
@@ -145,7 +162,13 @@ def result_enkrip(request, encrypted_file_id):
 
 def decryption_result(request, decrypted_file_id):
     decrypted_file = get_object_or_404(UploadedFile, id=decrypted_file_id)
-    return render(request, 'posting/result_decrypt.html', {'decrypted_file': decrypted_file})
+    decryption_duration = request.session.get('decryption_duration')  # Ambil durasi dekripsi dari sesi
+    
+    context = {
+        'decrypted_file': decrypted_file,
+        'decryption_duration': decryption_duration  # Kirim durasi ke context
+    }
+    return render(request, 'posting/result_decrypt.html', context)
 
 # Tambahkan fungsi split_secret_sharing
 def split_secret_sharing(request, encrypted_file_id):
@@ -259,7 +282,7 @@ def upload_shares_to_cloud(request, encrypted_file_id):
                 return HttpResponse(f"Failed to upload to OneDrive: {response.text}", status=500)
 
         logger.info("All shares successfully uploaded to cloud services.")
-        return render(request, 'upload_success.html')
+        return render(request, 'posting/upload_success.html')
 
     except Exception as e:
         logger.error(f"Uploading shares to cloud failed: {str(e)}")
@@ -386,10 +409,235 @@ def credentials_to_dict(credentials):
     }
 
 
-def clear_session(request):
-    request.session.flush()  # Clears all session data
-    return HttpResponse("Session cleared.")
+#AMBIL FILE RECONSTRUCT 
+def fetch_from_google_drive_ajax(request):
+    if not hasattr(request, 'session'):
+        return JsonResponse({'error': 'Session not available'}, status=400)
 
+    google_drive_credentials = request.session.get('google_drive_credentials')
+    if not google_drive_credentials:
+        return JsonResponse({'error': 'Google Drive credentials not found'}, status=400)
+
+    credentials = Credentials(**google_drive_credentials)
+    service = build('drive', 'v3', credentials=credentials)
+
+    # Ambil file dari Google Drive
+    results = service.files().list(pageSize=10, fields="files(id, name)").execute()
+    files = results.get('files', [])
+
+    return JsonResponse({'files': files})
+
+
+def fetch_from_dropbox_ajax(request):
+    # Ambil token akses langsung dari settings.py
+    dropbox_access_token = settings.DROPBOX_ACCESS_TOKEN
+
+    if not dropbox_access_token:
+        return JsonResponse({'error': 'Dropbox access token is missing'}, status=400)
+
+    # Gunakan token untuk mengakses Dropbox
+    dbx = dropbox.Dropbox(dropbox_access_token)
+    try:
+        files = dbx.files_list_folder('').entries
+        file_list = [{'name': file.name} for file in files]
+        return JsonResponse({'files': file_list})
+    except dropbox.exceptions.ApiError as error:
+        return JsonResponse({'error': f'Failed to fetch files from Dropbox: {error}'}, status=400)
+
+def fetch_from_onedrive_ajax(request):
+    onedrive_token_info = request.session.get('onedrive_token')
+    if not onedrive_token_info:
+        return JsonResponse({'error': 'OneDrive token not found'}, status=401)
+
+    # Periksa apakah token sudah kadaluwarsa
+    expires_at = onedrive_token_info.get('expires_at')
+    access_token = onedrive_token_info.get('access_token')
+
+    if not access_token or (expires_at and expires_at < time.time()):
+        # Jika token expired atau tidak ada, redirect untuk otentikasi ulang
+        return redirect('onedrive_authenticate', encrypted_file_id=request.session.get('encrypted_file_id'))
+
+    headers = {
+        'Authorization': f'Bearer {access_token}'
+    }
+
+    # Ambil file dari OneDrive
+    response = requests.get('https://graph.microsoft.com/v1.0/me/drive/root/children', headers=headers)
+    
+    if response.status_code == 200:
+        files = response.json().get('value', [])
+        return JsonResponse({'files': [{'name': file['name'], 'id': file['id']} for file in files]})
+    else:
+        return JsonResponse({'error': 'Failed to fetch files from OneDrive'}, status=response.status_code)
+
+    
+def download_from_google_drive(request, file_id):
+    google_drive_credentials = request.session.get('google_drive_credentials')
+    if not google_drive_credentials:
+        return JsonResponse({'error': 'Google Drive credentials not found'}, status=400)
+
+    credentials = Credentials(**google_drive_credentials)
+    service = build('drive', 'v3', credentials=credentials)
+
+    # Unduh file dari Google Drive
+    request = service.files().get_media(fileId=file_id)
+    fh = io.BytesIO()
+    downloader = MediaIoBaseDownload(fh, request)
+
+    done = False
+    while not done:
+        status, done = downloader.next_chunk()
+
+    fh.seek(0)
+    file_metadata = service.files().get(fileId=file_id, fields='name').execute()
+    file_name = file_metadata.get('name')
+
+    response = HttpResponse(fh.read(), content_type='application/octet-stream')
+    response['Content-Disposition'] = f'attachment; filename="{file_name}"'
+    return response
+
+def download_from_dropbox(request, file_name):
+    dropbox_access_token = settings.DROPBOX_ACCESS_TOKEN
+
+    if not dropbox_access_token:
+        return JsonResponse({'error': 'Dropbox access token is missing'}, status=400)
+
+    dbx = dropbox.Dropbox(dropbox_access_token)
+    try:
+        # Download file dari Dropbox
+        metadata, res = dbx.files_download(f'/{file_name}')
+        response = HttpResponse(res.content, content_type='application/octet-stream')
+        response['Content-Disposition'] = f'attachment; filename="{file_name}"'
+        return response
+    except dropbox.exceptions.ApiError as error:
+        return JsonResponse({'error': f'Failed to download file from Dropbox: {error}'}, status=400)
+
+def download_from_onedrive(request, file_id):
+    onedrive_token_info = request.session.get('onedrive_token')
+    if not onedrive_token_info:
+        return JsonResponse({'error': 'OneDrive token not found'}, status=400)
+
+    access_token = onedrive_token_info.get('access_token')
+    headers = {
+        'Authorization': f'Bearer {access_token}'
+    }
+
+    # Unduh file dari OneDrive
+    response = requests.get(f'https://graph.microsoft.com/v1.0/me/drive/items/{file_id}/content', headers=headers)
+    
+    if response.status_code == 200:
+        file_name = response.headers.get('Content-Disposition').split('filename=')[1].strip('"')
+        return HttpResponse(response.content, content_type='application/octet-stream')
+    else:
+        return JsonResponse({'error': 'Failed to download file from OneDrive'}, status=response.status_code)
+
+def upload_from_google_drive_to_system(request, file_name):
+    # Cek apakah request memiliki session
+    if not hasattr(request, 'session'):
+        return JsonResponse({'error': 'Session not available'}, status=400)
+
+    google_drive_credentials = request.session.get('google_drive_credentials')
+    if not google_drive_credentials:
+        return JsonResponse({'error': 'Google Drive credentials not found'}, status=400)
+
+    try:
+        credentials = Credentials(**google_drive_credentials)
+
+        # Periksa apakah token expired dan refresh jika perlu
+        if credentials.expired and credentials.refresh_token:
+            credentials.refresh(Request())
+            request.session['google_drive_credentials'] = credentials_to_dict(credentials)
+
+        service = build('drive', 'v3', credentials=credentials)
+
+        # Pastikan objek request untuk get_media adalah milik google API, bukan Django HttpRequest
+        drive_request = service.files().get_media(fileId=file_name)  # Gunakan variabel 'drive_request'
+        fh = io.BytesIO()
+        downloader = MediaIoBaseDownload(fh, drive_request)  # Menggunakan 'drive_request' bukan Django request
+
+        done = False
+        while not done:
+            status, done = downloader.next_chunk()
+
+        # Simpan file ke sistem
+        file_path = f'google_drive_uploads/{file_name}.txt'
+        saved_file = default_storage.save(file_path, ContentFile(fh.getvalue()))
+
+        # Tambahkan file yang diunggah ke session
+        if 'uploaded_files' not in request.session:
+            request.session['uploaded_files'] = []
+        uploaded_files = request.session['uploaded_files']
+        uploaded_files.append(saved_file)
+        request.session['uploaded_files'] = uploaded_files
+
+        return JsonResponse({'message': 'File successfully uploaded', 'file_path': saved_file})
+
+    except Exception as e:
+        print(f"Error: {e}")
+        return JsonResponse({'error': f'Failed to upload file from Google Drive: {e}'}, status=400)
+
+
+def upload_from_dropbox_to_system(request, file_name):
+    dropbox_access_token = settings.DROPBOX_ACCESS_TOKEN
+
+    if not dropbox_access_token:
+        return JsonResponse({'error': 'Dropbox access token is missing'}, status=400)
+
+    dbx = dropbox.Dropbox(dropbox_access_token)
+    try:
+        # Download file dari Dropbox
+        metadata, res = dbx.files_download(f'/{file_name}')
+        
+        # Simpan file ke sistem (misalnya direktori media)
+        file_path = f'dropbox_uploads/{file_name}'
+        saved_file = default_storage.save(file_path, ContentFile(res.content))
+        
+        # Tambahkan nama file yang diunggah ke session
+        if 'uploaded_files' not in request.session:
+            request.session['uploaded_files'] = []
+        
+        uploaded_files = request.session['uploaded_files']
+        uploaded_files.append(saved_file)
+        request.session['uploaded_files'] = uploaded_files
+        
+        # Return file path atau status sukses
+        return JsonResponse({'message': 'File successfully uploaded', 'file_path': saved_file})
+    except dropbox.exceptions.ApiError as error:
+        return JsonResponse({'error': f'Failed to upload file from Dropbox: {error}'}, status=400)
+
+def upload_from_onedrive_to_system(request, file_name):
+    onedrive_token_info = request.session.get('onedrive_token')
+    if not onedrive_token_info:
+        return JsonResponse({'error': 'OneDrive token not found'}, status=400)
+
+    access_token = onedrive_token_info.get('access_token')
+    headers = {
+        'Authorization': f'Bearer {access_token}'
+    }
+
+    try:
+        # Download file dari OneDrive
+        response = requests.get(f'https://graph.microsoft.com/v1.0/me/drive/items/{file_name}/content', headers=headers)
+        
+        if response.status_code == 200:
+            # Simpan file ke sistem
+            file_path = f'onedrive_uploads/{file_name}.txt'
+            saved_file = default_storage.save(file_path, ContentFile(response.content))
+
+            # Tambahkan ke session
+            if 'uploaded_files' not in request.session:
+                request.session['uploaded_files'] = []
+            uploaded_files = request.session['uploaded_files']
+            uploaded_files.append(saved_file)
+            request.session['uploaded_files'] = uploaded_files
+
+            return JsonResponse({'message': 'File successfully uploaded', 'file_path': saved_file})
+        else:
+            return JsonResponse({'error': 'Failed to download file from OneDrive'}, status=response.status_code)
+
+    except Exception as e:
+        return JsonResponse({'error': f'Failed to upload file from OneDrive: {e}'}, status=400)
+  
 
 def reconstruct_secret_sharing(request):
     if request.method == 'POST':
@@ -406,6 +654,10 @@ def reconstruct_secret_sharing(request):
             shares.append(share)
 
         try:
+            # Catat waktu mulai rekonstruksi
+            start_time = time.perf_counter()
+            logger.info(f"Start time: {start_time}")  # Tambahkan log untuk waktu mulai
+            
             # Rekonstruksi secret
             reconstructed_secret = recover_secret(shares)
             
@@ -415,6 +667,12 @@ def reconstruct_secret_sharing(request):
             # Gabungkan bagian besar dan secret yang direkonstruksi
             reconstructed_data = join_data(reconstructed_secret.to_bytes(16, 'big'), large_part)
             
+            # Catat waktu selesai rekonstruksi
+            end_time = time.perf_counter()
+            logger.info(f"End time: {end_time}")  # Tambahkan log untuk waktu selesai
+            reconstruction_duration = end_time - start_time  # Durasi proses rekonstruksi dalam detik
+            logger.info(f"Reconstruction duration: {reconstruction_duration} seconds")  # Tambahkan log untuk durasi
+            
             # Simpan file hasil rekonstruksi
             reconstructed_file_path = os.path.join(settings.MEDIA_ROOT, 'reconstructed', 'reconstructed_file.enc')
             os.makedirs(os.path.dirname(reconstructed_file_path), exist_ok=True)
@@ -422,6 +680,7 @@ def reconstruct_secret_sharing(request):
             
             # Simpan path file yang direkonstruksi ke dalam sesi
             request.session['reconstructed_file_path'] = reconstructed_file_path
+            request.session['reconstruction_duration'] = reconstruction_duration  # Simpan durasi ke session
             
             # Arahkan pengguna ke halaman hasil rekonstruksi
             return redirect('result_reconstruct')
@@ -433,11 +692,13 @@ def reconstruct_secret_sharing(request):
     
 def result_reconstruct(request):
     reconstructed_file_path = request.session.get('reconstructed_file_path')
+    reconstruction_duration = request.session.get('reconstruction_duration')  # Ambil durasi dari session
     if not reconstructed_file_path or not os.path.exists(reconstructed_file_path):
         return HttpResponse("Reconstructed file not found.", status=404)
 
     context = {
         'reconstructed_file_path': reconstructed_file_path,
+        'reconstruction_duration': reconstruction_duration  # Tambahkan durasi ke context
     }
     return render(request, 'posting/result_reconstruct.html', context)
 
