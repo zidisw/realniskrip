@@ -153,32 +153,49 @@ document.getElementById('dropboxBtn').addEventListener('click', function() {
     .catch(error => console.error('Error fetching files from Dropbox:', error));
 });
 
-
 document.getElementById('oneDriveBtn').addEventListener('click', function() {
-    const encryptedFileId = document.getElementById('encrypted_file_id').value;  // Ambil ID file terenkripsi
-    
-    fetch('/posting/onedrive-authenticate/', {
-        method: 'POST',
+    fetch('/posting/fetch_from_onedrive_ajax/', {  // Change the endpoint here
+        method: 'GET',
         headers: {
-            'X-CSRFToken': '{{ csrf_token }}',  // Pastikan CSRF token benar
-            'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ encrypted_file_id: encryptedFileId })  // Kirim data dengan benar
-    })
-    .then(response => {
-        if (!response.ok) {
-            throw new Error('Network response was not ok');
+            'X-CSRFToken': '{{ csrf_token }}'  // CSRF token if needed
         }
-        return response.json();
     })
+    .then(response => response.json())
     .then(data => {
-        if (data.redirect_url) {
-            window.location.href = data.redirect_url;
-        }
-    })
-    .catch(error => console.error('Error:', error));
-});
+        let fileList = document.getElementById('file-list');
+        fileList.innerHTML = ''; // Clear previous file list
 
+        // Iterate over each file returned from OneDrive
+        data.files.forEach(file => {
+            let li = document.createElement('li');
+            li.textContent = file.name;
+
+            // Create an upload button for each file to upload it to the system
+            let uploadBtn = document.createElement('button');
+            uploadBtn.textContent = 'Upload to System';
+            
+            uploadBtn.onclick = function() {
+                let encodedFileName = encodeURIComponent(file.id);  // Use file ID from OneDrive
+                fetch(`/posting/upload_from_onedrive_to_system/${encodedFileName}/`)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.message) {
+                        alert(data.message);  // Display success message
+                        uploadedFilesCount += 1;  // Increment uploaded files count
+                        updateUploadStatus();  // Update the upload status
+                    } else {
+                        console.error('Error uploading file:', data.error);
+                    }
+                })
+                .catch(error => console.error('Error uploading file:', error));
+            };
+
+            li.appendChild(uploadBtn);
+            fileList.appendChild(li);
+        });
+    })
+    .catch(error => console.error('Error fetching files from OneDrive:', error));
+});
 
 
     // Google Drive

@@ -445,23 +445,16 @@ def fetch_from_dropbox_ajax(request):
         return JsonResponse({'error': f'Failed to fetch files from Dropbox: {error}'}, status=400)
 
 def fetch_from_onedrive_ajax(request):
-    onedrive_token_info = request.session.get('onedrive_token')
+    onedrive_token_info = request.session.get('onedrive_access_token')
     if not onedrive_token_info:
-        return JsonResponse({'error': 'OneDrive token not found'}, status=401)
+        return JsonResponse({'error': 'OneDrive access token not found'}, status=401)
 
-    # Periksa apakah token sudah kadaluwarsa
-    expires_at = onedrive_token_info.get('expires_at')
-    access_token = onedrive_token_info.get('access_token')
-
-    if not access_token or (expires_at and expires_at < time.time()):
-        # Jika token expired atau tidak ada, redirect untuk otentikasi ulang
-        return redirect('onedrive_authenticate', encrypted_file_id=request.session.get('encrypted_file_id'))
-
+    access_token = onedrive_token_info
     headers = {
         'Authorization': f'Bearer {access_token}'
     }
 
-    # Ambil file dari OneDrive
+    # Fetch files from OneDrive
     response = requests.get('https://graph.microsoft.com/v1.0/me/drive/root/children', headers=headers)
     
     if response.status_code == 200:
@@ -469,6 +462,7 @@ def fetch_from_onedrive_ajax(request):
         return JsonResponse({'files': [{'name': file['name'], 'id': file['id']} for file in files]})
     else:
         return JsonResponse({'error': 'Failed to fetch files from OneDrive'}, status=response.status_code)
+
 
     
 def download_from_google_drive(request, file_id):
