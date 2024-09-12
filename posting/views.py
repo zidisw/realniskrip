@@ -513,12 +513,50 @@ def fetch_from_dropbox_ajax(request):
     except dropbox.exceptions.ApiError as error:
         return JsonResponse({'error': f'Failed to fetch files from Dropbox: {error}'}, status=400)
 
+def is_token_expired(token_info):
+    current_time = time.time()
+    expiration_time = token_info.get('expires_at')
+    if not expiration_time:
+        return True  # Anggap kadaluarsa jika tidak ada informasi masa berlaku
+    return current_time >= expiration_time
+
+def refresh_onedrive_token(request):
+    refresh_token = request.session.get('onedrive_refresh_token')
+    if not refresh_token:
+        return JsonResponse({'error': 'No refresh token found'}, status=401)
+    
+    try:
+        app = ConfidentialClientApplication(
+            client_id=settings.ONEDRIVE_CLIENT_ID,
+            authority=settings.ONEDRIVE_AUTHORITY,
+            client_credential=settings.ONEDRIVE_CLIENT_SECRET
+        )
+        result = app.acquire_token_by_refresh_token(
+            refresh_token,
+            scopes=settings.ONEDRIVE_SCOPES
+        )
+
+        if 'access_token' in result:
+            # Simpan token baru di sesi
+            request.session['onedrive_access_token'] = result['access_token']
+            request.session['onedrive_refresh_token'] = result.get('refresh_token', refresh_token)
+            request.session['onedrive_token_info'] = {'expires_at': time.time() + result['expires_in']}
+            return True
+        else:
+            error_msg = result.get('error_description', 'Error during token refresh')
+            return JsonResponse({'error': error_msg}, status=400)
+    except Exception as e:
+        return JsonResponse({'error': f'Failed to refresh token: {str(e)}'}, status=500)
+
 def fetch_from_onedrive_ajax(request):
-    onedrive_token_info = request.session.get('onedrive_access_token')
-    if not onedrive_token_info:
+    token_info = request.session.get('onedrive_token_info')
+    if not token_info or is_token_expired(token_info):
+        refresh_onedrive_token(request)  # Segarkan token jika sudah kadaluarsa
+
+    access_token = request.session.get('onedrive_access_token')
+    if not access_token:
         return JsonResponse({'error': 'OneDrive access token not found'}, status=401)
 
-    access_token = onedrive_token_info
     headers = {
         'Authorization': f'Bearer {access_token}'
     }
@@ -530,8 +568,7 @@ def fetch_from_onedrive_ajax(request):
         files = response.json().get('value', [])
         return JsonResponse({'files': [{'name': file['name'], 'id': file['id']} for file in files]})
     else:
-        return JsonResponse({'error': 'Failed to fetch files from OneDrive'}, status=response.status_code)
-
+        return JsonResponse({'error': f'Failed to fetch files from OneDrive: {response.status_code}'}, status=response.status_code)
 
     
 def download_from_google_drive(request, file_id):
@@ -669,11 +706,11 @@ def upload_from_dropbox_to_system(request, file_name):
         return JsonResponse({'error': f'Failed to upload file from Dropbox: {error}'}, status=400)
 
 def upload_from_onedrive_to_system(request, file_name):
-    onedrive_token_info = request.session.get('onedrive_token')
+    onedrive_token_info = request.session.get('onedrive_access_token')
     if not onedrive_token_info:
         return JsonResponse({'error': 'OneDrive token not found'}, status=400)
 
-    access_token = onedrive_token_info.get('access_token')
+    access_token = onedrive_token_info
     headers = {
         'Authorization': f'Bearer {access_token}'
     }
@@ -699,59 +736,65 @@ def upload_from_onedrive_to_system(request, file_name):
             return JsonResponse({'error': 'Failed to download file from OneDrive'}, status=response.status_code)
 
     except Exception as e:
-        return JsonResponse({'error': f'Failed to upload file from OneDrive: {e}'}, status=400)
-  
+        return JsonResponse({'error': f'Failed to upload file from OneDrive: {str(e)}'}, status=400)
+
+
 
 def reconstruct_secret_sharing(request):
     if request.method == 'POST':
-        shares_files = request.FILES.getlist('shares_files')
-        large_part_file = request.FILES['large_part_file']
-        
+        # Get the share files and the large part file from the request
+        shares_files = [request.FILES[f'share_file_{i}'] for i in range(len(request.FILES)) if f'share_file_{i}' in request.FILES]
+        large_part_file = request.FILES.get('large_part_file')
+
+        # Check if at least 2 share files and the large part file are provided
         if len(shares_files) < 2:
             return HttpResponse("Insufficient shares provided. You need to upload at least 2 shares.", status=400)
-        
+        if not large_part_file:
+            return HttpResponse("Large part file is missing.", status=400)
+
         shares = []
         for file in shares_files:
             share_content = file.read().decode('utf-8').strip()
-            share = tuple(map(int, share_content[1:-1].split(',')))
+            share = tuple(map(int, share_content[1:-1].split(',')))  # Assuming share content is in a specific format
             shares.append(share)
 
         try:
-            # Catat waktu mulai rekonstruksi
+            # Record reconstruction start time
             start_time = time.perf_counter()
-            logger.info(f"Start time: {start_time}")  # Tambahkan log untuk waktu mulai
-            
-            # Rekonstruksi secret
+            logger.info(f"Start time: {start_time}")
+
+            # Reconstruct the secret using Shamir's Secret Sharing
             reconstructed_secret = recover_secret(shares)
-            
-            # Baca bagian besar dari file yang diunggah
+
+            # Read the large part from the uploaded file
             large_part = large_part_file.read()
-            
-            # Gabungkan bagian besar dan secret yang direkonstruksi
+
+            # Combine the large part and the reconstructed secret
             reconstructed_data = join_data(reconstructed_secret.to_bytes(16, 'big'), large_part)
-            
-            # Catat waktu selesai rekonstruksi
+
+            # Record reconstruction end time
             end_time = time.perf_counter()
-            logger.info(f"End time: {end_time}")  # Tambahkan log untuk waktu selesai
-            reconstruction_duration = end_time - start_time  # Durasi proses rekonstruksi dalam detik
-            logger.info(f"Reconstruction duration: {reconstruction_duration} seconds")  # Tambahkan log untuk durasi
-            
-            # Simpan file hasil rekonstruksi
+            logger.info(f"End time: {end_time}")
+            reconstruction_duration = end_time - start_time
+            logger.info(f"Reconstruction duration: {reconstruction_duration} seconds")
+
+            # Save the reconstructed file to the file system
             reconstructed_file_path = os.path.join(settings.MEDIA_ROOT, 'reconstructed', 'reconstructed_file.enc')
             os.makedirs(os.path.dirname(reconstructed_file_path), exist_ok=True)
             write_binary_file(reconstructed_file_path, reconstructed_data)
-            
-            # Simpan path file yang direkonstruksi ke dalam sesi
+
+            # Store the path and reconstruction duration in the session
             request.session['reconstructed_file_path'] = reconstructed_file_path
-            request.session['reconstruction_duration'] = reconstruction_duration  # Simpan durasi ke session
-            
-            # Arahkan pengguna ke halaman hasil rekonstruksi
+            request.session['reconstruction_duration'] = reconstruction_duration
+
             return redirect('result_reconstruct')
         except Exception as e:
             logger.error(f"Error during secret reconstruction: {e}")
             return HttpResponse("Secret reconstruction failed.", status=500)
     else:
         return render(request, 'posting/reconstruct.html')
+
+
     
 def result_reconstruct(request):
     reconstructed_file_path = request.session.get('reconstructed_file_path')

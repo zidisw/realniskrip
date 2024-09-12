@@ -137,7 +137,21 @@ LOGGING = {
     },
 }
 
-DROPBOX_ACCESS_TOKEN = 'sl.B8O3OePjF1p5fDVCc6N13dIHurmUvG9mE5aWK8XRMKHr3YCjWQoGzWVrCGxdgbg-RoMJNCJ7w3afyVrrQba2JiUSHH4RmVwVCQH93xKmKk8LrJyj6sqxD1HOJOm6D35QiHNNp8XezH3y'
+DROPBOX_ACCESS_TOKEN = 'sl.B8w0zCxA6gW3mboJFE9AF9SpAka7EiTonGMddvlU60Oc0RlU3065d4PRWDXeI7zEzaCTybI2XO0gT4770FDrJ1-WX682ytH5i9M--ISu2i0gFI1ZhTbs7mWMXjROlfEtn5ihixuznL-F'
 
 APP_KEY = '10b2v2rft2hnssf'
 APP_SECRET = 'qhe65w88gokpfwa'
+
+# settings.py
+
+SESSION_ENGINE = 'django.contrib.sessions.backends.db'  # Menggunakan DB untuk sesi
+SESSION_COOKIE_SECURE = False  # Nonaktifkan hanya untuk testing di localhost
+SESSION_EXPIRE_AT_BROWSER_CLOSE = False
+
+# settings.py
+
+ONEDRIVE_CLIENT_ID = '1adf0dfd-dc01-4b9b-a884-cbc9e1ca32d1'  # Replace with your Client ID
+ONEDRIVE_CLIENT_SECRET = '19F8Q~6QLThWuHWIQiQBiY9YTRz7YRxdRWKSEcr4'  # Replace with your Client Secret
+ONEDRIVE_REDIRECT_URI = 'http://localhost:8000/posting/onedrive-callback/'  # Replace with your Redirect URI
+ONEDRIVE_AUTHORITY = 'https://login.microsoftonline.com/common'  # The authority URL for Microsoft accounts
+ONEDRIVE_SCOPES = ['Files.ReadWrite.All']  # Scopes to request during OAuth

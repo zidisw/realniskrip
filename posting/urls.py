@@ -19,4 +19,5 @@ urlpatterns = [
     path('upload_from_dropbox_to_system/<str:file_name>/', views.upload_from_dropbox_to_system, name='upload_from_dropbox_to_system'),
     path('upload_from_google_drive_to_system/<str:file_name>/', views.upload_from_google_drive_to_system, name='upload_from_google_drive_to_system'),
     path('upload_from_onedrive_to_system/<str:file_name>/', views.upload_from_onedrive_to_system, name='upload_from_onedrive_to_system'),
+    path('reconstruct_secret_sharing/', views.reconstruct_secret_sharing, name='reconstruct_secret_sharing'),
 ] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

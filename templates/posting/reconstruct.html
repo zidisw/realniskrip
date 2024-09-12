@@ -198,32 +198,58 @@ document.getElementById('oneDriveBtn').addEventListener('click', function() {
 });
 
 
-    // Google Drive
-data.files.forEach(file => {
-    let li = document.createElement('li');
-    li.textContent = file.name;
+
+document.getElementById('reconstructBtn').addEventListener('click', function() {
+    console.log('Reconstruct button clicked');  // Debugging log
+
+    // Ambil elemen form
+    let form = new FormData();  // You correctly defined 'form' here
     
-    // Tombol untuk mengunduh file
-    let downloadBtn = document.createElement('button');
-    downloadBtn.textContent = 'Download';
-    downloadBtn.onclick = function() {
-        fetch(`/download_from_google_drive/${file.id}/`)
-        .then(response => response.blob())
-        .then(blob => {
-            const url = window.URL.createObjectURL(new Blob([blob]));
-            const link = document.createElement('a');
-            link.href = url;
-            link.setAttribute('download', file.name);
-            document.body.appendChild(link);
-            link.click();
-            link.parentNode.removeChild(link);
-        })
-        .catch(error => console.error('Error downloading file from Google Drive:', error));
-    };
-    
-    li.appendChild(downloadBtn);
-    fileList.appendChild(li);
+    // Ambil large part file dari input
+    let largePartFile = document.getElementById('large_part_file').files[0];
+    if (largePartFile) {
+        form.append('large_part_file', largePartFile);
+        console.log('Large part file added');  // Debugging log
+    } else {
+        console.error('Large part file missing');  // Debugging log to ensure file is present
+    }
+
+    // Ambil file dari daftar cloud (Google Drive, Dropbox, OneDrive)
+    document.querySelectorAll('#file-list button').forEach((button, index) => {
+        let file = button.getAttribute('data-file');
+        if (file) {
+            form.append(`share_file_${index}`, file);
+            console.log(`Share file ${index} added`);  // Debugging log
+        } else {
+            console.error(`Share file ${index} missing`);  // Log if the file is missing
+        }
+    });
+
+    // Kirim form ke backend
+    fetch('/posting/reconstruct_secret_sharing/', {
+        method: 'POST',
+        body: form,  // Corrected from 'formData' to 'form'
+        headers: {
+            'X-CSRFToken': '{{ csrf_token }}'  // Include CSRF token
+        }
+    })
+    .then(response => {
+        console.log('Fetch response:', response);  // Debugging log
+        if (!response.ok) {  // If response fails
+            throw new Error('Network response was not ok');
+        }
+        return response.json();
+    })
+    .then(data => {
+        if (data.success) {
+            alert('Reconstruct Success: ' + data.message);
+        } else {
+            console.error('Reconstruct failed:', data.error);
+        }
+    })
+    .catch(error => console.error('Error reconstructing secret:', error));
 });
+
 
 </script>
 
