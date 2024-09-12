@@ -221,20 +221,23 @@ logger = logging.getLogger(__name__)
 
 
 def upload_shares_to_cloud(request, encrypted_file_id):
-    # Ensure the request is a POST request
     if request.method != 'POST':
         return HttpResponse("Invalid request method. POST required.", status=400)
 
-    # Ensure Google Drive credentials are in the session
+    # Ensure Google Drive credentials are in the session (for other cloud services)
     if 'google_drive_credentials' not in request.session:
         return redirect('google_drive_authenticate', encrypted_file_id=encrypted_file_id)
 
-    # Ensure Dropbox access token is set
+    # Ensure Dropbox access token is set (for other cloud services)
     if not settings.DROPBOX_ACCESS_TOKEN:
         return HttpResponse("Dropbox access token is missing.", status=400)
 
-    # Ensure OneDrive access token is in the session
-    if 'onedrive_access_token' not in request.session:
+    # OneDrive: Retrieve the access token from session
+    access_token = request.session.get('onedrive_access_token')
+    refresh_token = request.session.get('onedrive_refresh_token')
+
+    if not access_token or not refresh_token:
+        logger.error("Access token or refresh token not found in session.")
         return redirect('onedrive_authenticate', encrypted_file_id=encrypted_file_id)
 
     # Now retrieve the file and its shares for upload
@@ -250,7 +253,6 @@ def upload_shares_to_cloud(request, encrypted_file_id):
             os.path.join(settings.MEDIA_ROOT, os.path.relpath(share_file_path, '/media/'))
             for share_file_path in shares_file_paths
         ]
-
         # Google Drive Upload
         credentials = Credentials(**request.session['google_drive_credentials'])
         drive_service = build('drive', 'v3', credentials=credentials)
@@ -264,8 +266,6 @@ def upload_shares_to_cloud(request, encrypted_file_id):
         with open(full_shares_file_paths[1], 'rb') as share_file:
             dbx.files_upload(share_file.read(), '/' + os.path.basename(full_shares_file_paths[1]), mute=True)
 
-        # OneDrive Upload
-        access_token = request.session.get('onedrive_access_token')
         for i in range(2, len(full_shares_file_paths)):
             one_drive_upload_url = f"https://graph.microsoft.com/v1.0/me/drive/root:/{os.path.basename(full_shares_file_paths[i])}:/content"
             with open(full_shares_file_paths[i], 'rb') as share_file:
@@ -277,16 +277,31 @@ def upload_shares_to_cloud(request, encrypted_file_id):
             }
             response = requests.put(one_drive_upload_url, headers=headers, data=file_content)
 
-            if response.status_code != 201:
+            # Handle potential token expiration (IDX14100)
+            if response.status_code == 401 and "IDX14100" in response.text:
+                logger.info("Token expired (IDX14100), attempting to refresh token...")
+                # Refresh the token and retry the request
+                refresh_onedrive_token(request)
+                access_token = request.session.get('onedrive_access_token')
+
+                # Retry the OneDrive upload
+                headers['Authorization'] = f'Bearer {access_token}'
+                response = requests.put(one_drive_upload_url, headers=headers, data=file_content)
+
+                if response.status_code != 201:
+                    logger.error(f"Failed to upload to OneDrive after token refresh: {response.text}")
+                    return HttpResponse(f"Failed to upload to OneDrive after token refresh: {response.text}", status=500)
+
+            elif response.status_code != 201:
                 logger.error(f"Failed to upload to OneDrive: {response.text}")
                 return HttpResponse(f"Failed to upload to OneDrive: {response.text}", status=500)
 
-        logger.info("All shares successfully uploaded to cloud services.")
+        logger.info("All shares successfully uploaded to OneDrive.")
         return render(request, 'posting/upload_success.html')
 
     except Exception as e:
-        logger.error(f"Uploading shares to cloud failed: {str(e)}")
-        return HttpResponse(f"Uploading shares to cloud failed: {str(e)}", status=500)
+        logger.error(f"Uploading shares to OneDrive failed: {str(e)}")
+        return HttpResponse(f"Uploading shares to OneDrive failed: {str(e)}", status=500)
 
     
 # Google Drive Authentication
@@ -328,6 +343,55 @@ def clear_dropbox_token(request):
         del request.session['dropbox_access_token']
     return redirect('dropbox_authenticate')
 
+def is_token_expired(access_token):
+    
+    token_info = requests.request.session.get('onedrive_token_info')
+    if not token_info or 'expires_at' not in token_info:
+        return True  # No expiration info found, treat as expired
+    
+    # Compare current time to token expiration time
+    current_time = time.time()
+    expiration_time = token_info['expires_at']  # Assuming 'expires_at' stores Unix timestamp of expiration
+    return current_time >= expiration_time
+
+from msal import ConfidentialClientApplication
+
+def refresh_onedrive_token(request):
+    try:
+        app = ConfidentialClientApplication(
+            client_id=settings.ONEDRIVE_CLIENT_ID,
+            authority=settings.ONEDRIVE_AUTHORITY,
+            client_credential=settings.ONEDRIVE_CLIENT_SECRET
+        )
+        
+        refresh_token = request.session.get('onedrive_refresh_token')
+        if not refresh_token:
+            logger.error("Refresh token not found in session.")
+            return HttpResponse("Refresh token not found in session.", status=400)
+
+        # Request a new access token using the refresh token
+        result = app.acquire_token_by_refresh_token(
+            refresh_token,
+            scopes=settings.ONEDRIVE_SCOPES
+        )
+
+        # Save the new access token and refresh token in the session
+        if 'access_token' in result:
+            request.session['onedrive_access_token'] = result['access_token']
+            request.session['onedrive_refresh_token'] = result.get('refresh_token', refresh_token)
+            request.session['onedrive_token_info'] = {'expires_at': time.time() + result['expires_in']}
+            logger.info("Token refreshed successfully.")
+        else:
+            error_msg = result.get('error_description', 'Unknown error during token refresh')
+            logger.error(f"Failed to refresh token: {error_msg}")
+            return HttpResponse(f"Failed to refresh token: {error_msg}", status=400)
+
+    except Exception as e:
+        logger.error(f"Error during OneDrive token refresh: {str(e)}")
+        return HttpResponse(f"Error during token refresh: {str(e)}", status=500)
+
+
+
 def onedrive_authenticate(request, encrypted_file_id):
     try:
         # Buat instance aplikasi klien rahasia menggunakan MSAL
@@ -363,7 +427,6 @@ def onedrive_authenticate(request, encrypted_file_id):
 def onedrive_callback(request):
     logger.info("OneDrive callback initiated")
 
-    # Dapatkan kode otorisasi dari parameter URL
     code = request.GET.get('code')
     encrypted_file_id = request.GET.get('state') or request.session.get('encrypted_file_id')
 
@@ -371,7 +434,6 @@ def onedrive_callback(request):
         return HttpResponse("Authorization code or file ID missing.", status=400)
 
     try:
-        # Tukar kode otorisasi dengan token
         app = ConfidentialClientApplication(
             client_id=settings.ONEDRIVE_CLIENT_ID,
             authority=settings.ONEDRIVE_AUTHORITY,
@@ -385,8 +447,12 @@ def onedrive_callback(request):
         )
 
         if 'access_token' in result:
-            # Simpan access token di session
+            # Store both access and refresh tokens in session
             request.session['onedrive_access_token'] = result['access_token']
+            request.session['onedrive_refresh_token'] = result.get('refresh_token')
+            request.session['onedrive_token_info'] = {'expires_at': time.time() + result['expires_in']}
+            
+            logger.info(f"Access token and refresh token saved in session.")
             return redirect('split_secret_sharing', encrypted_file_id=encrypted_file_id)
         else:
             error_msg = result.get('error_description', 'Unknown error during token exchange')
@@ -395,6 +461,7 @@ def onedrive_callback(request):
     except Exception as e:
         logger.error(f"Error during token exchange: {str(e)}")
         return HttpResponse(f"Error during token exchange: {str(e)}", status=500)
+
 
 
 # Convert Google credentials to a dictionary
@@ -407,6 +474,8 @@ def credentials_to_dict(credentials):
         'client_secret': credentials.client_secret,
         'scopes': credentials.scopes
     }
+
+
 
 
 #AMBIL FILE RECONSTRUCT 
